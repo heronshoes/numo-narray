@@ -351,6 +351,7 @@ class NArrayTest < Test::Unit::TestCase
             assert { a.percentile(50, axis: 1) == [2, 7] }
             assert { a.percentile(90, axis: 1) == [2.8, 10.2] }
             assert { a.percentile(100, axis: 1) == [3, 11] }
+            # quantile tests here
           end
         end
         assert { a.dup.fill(12) == [[12]*3]*2 }

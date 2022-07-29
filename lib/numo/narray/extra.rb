@@ -1185,7 +1185,14 @@ module Numo
 
     # Percentile
     #
-    # @param q [Numo::NArray]
+    # There's a bug when self contains Float::NAN.
+    #   a = Numo::DFloat[1,2,Float::NAN,4]
+    #   a.median  #=> 2.0, because non-NaN values are [1,2,4]
+    #   a.percentile(50)  #=> 3.0  coming from interpolation of 2 and 4
+    #                      in nan-aware array [1,2,4,Float::NAN]
+    # Param q only Accepts Integer and Float do'es not accept Numo::NArray.
+    #
+    # @param q [Integer, Float] percentile specifier in 0..100
     # @param axis [Integer] applied axis
     # @return [Numo::NArray]  return percentile
     def percentile(q, axis: nil)
@@ -1210,6 +1217,63 @@ module Numo
         refs_upper[axis] = i + 1
         sorted[*refs] + r * (sorted[*refs_upper] - sorted[*refs])
       end
+    end
+
+    # Quantile
+    # 
+    # @param q [Integer, Float, Numo::NArray] quantile specifier in 0..1
+    # @param axis [Integer] applied axis
+    # @param nan [false, true] nan awareness
+    # @return [Numo::NArray] quantile
+    def quantile(q, axis: nil, nan: false)
+      # normalize q to Numo::DFloat#shape=[n]
+      q_cast = Numo::DFloat.cast(q)
+      original_shape = q_cast.shape
+      q_flat = q_cast.reshape(nil)
+
+      raise ArgumentError, "q is out of range" unless ((q_flat >= 0) & (q_flat <= 1)).all?
+
+      # if axis.nil? sort as 1-D array but no change in the shape.
+      sorted = self.sort(axis: axis, nan: nan)
+      
+      # zero if isnan.all? by axis
+      length_by_axis = axis.nil? ? sorted.size : sorted.shape[axis]
+      nan_mask_by_axis =
+        sorted.isnan.count_true(axis:axis, keepdims:true).ne(length_by_axis)
+
+      # set valid num of elements by axis
+      if nan  # nan aware
+        n = sorted.shape[axis]
+      else    # ignore nan (default)
+        # after sorted, NaN is at the right end
+        # so 0...(isnan.count_false) is non-NaN elements
+        n = sorted.isnan.count_false(axis: axis, keepdims: true)
+        sorted[sorted.isnan & nan_mask_by_axis] = 0
+      end
+      
+      # insert zeros at the end of the axis to secure overrun of indexing
+      # `insert` will reshape to 1D if axis.nil? at the same time
+      sorted = sorted.insert(-1, 0, axis:axis)
+      
+      axis = 0 if axis.nil?
+
+      # calc index in float (0..n-1) by vector operation
+      x = q_flat * (n - 1)
+      i, r = x.floor, x % 1
+
+      # create 1-D index
+      shape = sorted.shape
+      step = shape[axis]
+      shape[axis] = 1
+      i = i + Numo::DFloat.new(shape).seq(0, step)
+      
+      # linear interpolation
+      quantile = (1 - r) * sorted[i] + r * sorted[i+1]
+      
+      return quantile[0] if quantile.shape == [1]   # return scalar
+      original_shape[axis] = 1
+      quantile.reshape!(original_shape) if original_shape.size > 1
+      quantile
     end
 
     # Kronecker product of two arrays.
